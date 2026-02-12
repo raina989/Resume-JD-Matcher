@@ -68,7 +68,7 @@ Contributions are welcome! Feel free to open issues or submit PRs.
 MIT License - see LICENSE file
 
 📧 Contact
-Your Name - @your_twitter - email@example.com
+Raina Khanam - khanraina12@gmail.com
 
-Project Link: https://github.com/YOUR_USERNAME/Resume-JD-Matcher
+Project Link: https://github.com/raina989/Resume-JD-Matcher
 ```
