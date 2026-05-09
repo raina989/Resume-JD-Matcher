@@ -1,6 +1,6 @@
 # 🎯 ResumeAlign - AI Resume & Job Description Matcher
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](YOUR_STREAMLIT_LINK_HERE)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://resumealign-txfwxaovexerwupdz45r2d.streamlit.app/)
 
 ## 📋 Overview
 
@@ -18,7 +18,7 @@ ResumeAlign is an intelligent tool that analyzes your resume against job descrip
 
 ## 🖥️ Demo
 
-[Live Demo Link - Add after deployment]
+https://resumealign-txfwxaovexerwupdz45r2d.streamlit.app/
 
 ## 🛠️ Installation
 
@@ -59,7 +59,7 @@ Database: SQLite3
 Visualization: Matplotlib
 
 🚀 Deployment
-This app is deployed on Streamlit Community Cloud. [Add link after deployment]
+This app is deployed on Streamlit Community Cloud. https://resumealign-txfwxaovexerwupdz45r2d.streamlit.app/
 
 🤝 Contributing
 Contributions are welcome! Feel free to open issues or submit PRs.
