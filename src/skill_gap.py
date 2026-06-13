@@ -1,109 +1,273 @@
-# src/skill_gap.py - EXPANDED VERSION
 import re
 
-# Much larger skill database
-COMMON_SKILLS = {
-    # Programming Languages
-    'programming': [
-        'python', 'java', 'javascript', 'c++', 'c#', 'ruby', 'php', 'swift',
-        'kotlin', 'go', 'rust', 'typescript', 'html', 'css', 'sql', 'nosql'
-    ],
-    
-    # Frameworks & Libraries
-    'frameworks': [
-        'react', 'angular', 'vue', 'django', 'flask', 'spring', 'node.js',
-        'express', 'jquery', 'bootstrap', 'tailwind', 'tensorflow', 'pytorch'
-    ],
-    
+# =====================================================
+# BASE SKILLS DATABASE
+# =====================================================
+
+BASE_SKILLS = {
+
+    # Programming
+    "python",
+    "sql",
+    "java",
+    "javascript",
+    "c++",
+    "c#",
+    "r",
+
+    # Analytics
+    "tableau",
+    "power bi",
+    "excel",
+    "pandas",
+    "numpy",
+
+    # Cloud
+    "aws",
+    "azure",
+    "gcp",
+
     # Databases
-    'databases': [
-        'mysql', 'postgresql', 'mongodb', 'oracle', 'sqlite', 'redis',
-        'elasticsearch', 'dynamodb', 'cassandra', 'mariadb'
-    ],
-    
-    # Cloud & DevOps
-    'cloud': [
-        'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'jenkins', 'git',
-        'github', 'gitlab', 'ci/cd', 'terraform', 'ansible', 'linux'
-    ],
-    
-    # Data Science
-    'data_science': [
-        'machine learning', 'data analysis', 'data visualization', 'statistics',
-        'pandas', 'numpy', 'matplotlib', 'seaborn', 'scikit-learn', 'tableau',
-        'power bi', 'excel', 'r', 'spss', 'sas'
-    ],
-    
-    # Business Skills
-    'business': [
-        'project management', 'agile', 'scrum', 'leadership', 'communication',
-        'teamwork', 'problem solving', 'critical thinking', 'time management',
-        'presentation', 'negotiation', 'stakeholder management'
-    ],
-    
-    # Soft Skills
-    'soft_skills': [
-        'collaboration', 'adaptability', 'creativity', 'attention to detail',
-        'organization', 'prioritization', 'conflict resolution', 'mentoring'
-    ],
-    
+    "mysql",
+    "postgresql",
+    "mongodb",
+
+    # DevOps
+    "docker",
+    "kubernetes",
+    "git",
+
     # Marketing
-    'marketing': [
-        'seo', 'sem', 'social media', 'content marketing', 'email marketing',
-        'google analytics', 'adwords', 'facebook ads', 'copywriting', 'branding'
-    ],
-    
-    # Design
-    'design': [
-        'ui design', 'ux design', 'graphic design', 'photoshop', 'illustrator',
-        'figma', 'sketch', 'adobe xd', 'invision', 'wireframing', 'prototyping'
-    ],
-    
-    # Office Tools
-    'office': [
-        'microsoft word', 'microsoft excel', 'microsoft powerpoint',
-        'google docs', 'google sheets', 'google slides', 'slack', 'teams',
-        'zoom', 'asana', 'trello', 'jira', 'confluence', 'notion'
-    ]
+    "seo",
+    "sem",
+    "google ads",
+    "google analytics",
+    "ga4",
+    "hubspot",
+    "salesforce",
+    "meta",
+    "linkedin",
+    "email marketing",
+    "cro",
+    "conversion rate optimization",
+    "looker studio"
 }
 
-def extract_skills(text):
-    """
-    Extract skills from ANY job description or resume with improved detection
-    """
+# =====================================================
+# ALIASES
+# =====================================================
+
+ALIASES = {
+
+    "powerbi": "power bi",
+    "power_bi": "power bi",
+
+    "google analytics 4": "ga4",
+
+    "reactjs": "react",
+    "node.js": "nodejs",
+
+    "machine_learning": "machine learning",
+    "deep_learning": "deep learning",
+
+    "business_intelligence": "business intelligence",
+
+    "cplusplus": "c++",
+    "csharp": "c#",
+
+    "a/b testing": "ab testing",
+    "a b testing": "ab testing"
+}
+
+# =====================================================
+# NORMALIZE
+# =====================================================
+
+def normalize_text(text):
+
+    if not text:
+        return ""
+
     text = text.lower()
-    found_skills = set()
-    
-    # Flatten all skills into one list
-    all_skills = []
-    for category in COMMON_SKILLS.values():
-        all_skills.extend(category)
-    
-    # Check for each skill
-    for skill in all_skills:
-        if ' ' in skill:  # Multi-word skill
-            if re.search(rf'\b{skill}\b', text):
-                found_skills.add(skill)
-        else:  # Single word skill
-            if re.search(rf'\b{skill}\b', text):
-                found_skills.add(skill)
-    
-    # Also look for common skill indicators
-    skill_indicators = [
-        r'skilled in (\w+)',
-        r'expertise in (\w+)',
-        r'proficient in (\w+)',
-        r'experience with (\w+)',
-        r'knowledge of (\w+)',
-        r'familiar with (\w+)',
-        r'working knowledge of (\w+)',
-        r'hands-on experience with (\w+)'
+
+    for old, new in ALIASES.items():
+        text = text.replace(old, new)
+
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+# =====================================================
+# EXTRACT JD SKILLS DYNAMICALLY
+# =====================================================
+
+def extract_dynamic_skills(text):
+
+    text = normalize_text(text)
+
+    skills = set()
+
+    patterns = [
+
+        r"google ads",
+        r"google analytics",
+        r"ga4",
+        r"looker studio",
+        r"hubspot",
+        r"salesforce",
+        r"seo",
+        r"sem",
+        r"meta",
+        r"linkedin",
+        r"email marketing",
+        r"cro",
+        r"conversion rate optimization",
+        r"ab testing",
+        r"customer acquisition",
+        r"campaign strategy",
+        r"budget management",
+        r"team management",
+
+        r"python",
+        r"sql",
+        r"tableau",
+        r"power bi",
+        r"aws",
+        r"azure",
+        r"docker",
+        r"kubernetes"
     ]
-    
-    for pattern in skill_indicators:
-        matches = re.findall(pattern, text)
-        for match in matches:
-            if isinstance(match, str) and len(match) > 2:
-                found_skills.add(match)
-    
-    return found_skills
+
+    for pattern in patterns:
+
+        if re.search(rf"\b{re.escape(pattern)}\b", text):
+            skills.add(pattern)
+
+    return skills
+
+# =====================================================
+# EXTRACT SKILLS
+# =====================================================
+
+def extract_skills(text):
+
+    text = normalize_text(text)
+
+    found = set()
+
+    for skill in BASE_SKILLS:
+
+        if re.search(
+            rf"\b{re.escape(skill)}\b",
+            text
+        ):
+            found.add(skill)
+
+    dynamic = extract_dynamic_skills(text)
+
+    return found.union(dynamic)
+
+# =====================================================
+# MATCH
+# =====================================================
+
+def calculate_skill_match(
+    resume_text,
+    jd_text
+):
+
+    resume_skills = extract_skills(
+        resume_text
+    )
+
+    jd_skills = extract_skills(
+        jd_text
+    )
+
+    matched = (
+        resume_skills &
+        jd_skills
+    )
+
+    missing = (
+        jd_skills -
+        resume_skills
+    )
+
+    score = 0
+
+    if len(jd_skills) > 0:
+
+        score = round(
+            len(matched)
+            / len(jd_skills)
+            * 100,
+            2
+        )
+
+    return {
+
+        "score": score,
+
+        "matched":
+            sorted(
+                list(matched)
+            ),
+
+        "missing":
+            sorted(
+                list(missing)
+            ),
+
+        "resume_skills":
+            sorted(
+                list(resume_skills)
+            ),
+
+        "jd_skills":
+            sorted(
+                list(jd_skills)
+            )
+    }
+
+# =====================================================
+# PRIORITY SKILLS
+# =====================================================
+
+def get_priority_missing_skills(
+    resume_text,
+    jd_text,
+    limit=10
+):
+
+    result = calculate_skill_match(
+        resume_text,
+        jd_text
+    )
+
+    return result["missing"][:limit]
+
+# =====================================================
+# TEST
+# =====================================================
+
+if __name__ == "__main__":
+
+    resume = """
+    Digital Marketing Manager with SEO,
+    SEM, GA4, HubSpot, Salesforce,
+    Google Ads and CRO.
+    """
+
+    jd = """
+    Looking for SEO, SEM, GA4,
+    HubSpot, Salesforce,
+    Google Ads, CRO and Meta.
+    """
+
+    result = calculate_skill_match(
+        resume,
+        jd
+    )
+
+    print(result)

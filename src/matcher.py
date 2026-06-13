@@ -1,294 +1,337 @@
-# matcher.py
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from text_cleaner import clean_text
+# src/matcher.py
 import re
+import streamlit as st
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
-def enhanced_tfidf_match(resume_text, jd_text):
-    """
-    Fixed TF-IDF matching that won't return 0%
-    """
-    from text_cleaner import clean_text
-    
-    # Clean both texts
-    resume_clean = clean_text(resume_text)
-    jd_clean = clean_text(jd_text)
-    
-    # Ensure we have enough text to work with
-    if len(resume_clean.split()) < 5 or len(jd_clean.split()) < 5:
-        return 0.5  # Baseline for very short texts
-    
-    try:
-        # More lenient TF-IDF parameters
-        vectorizer = TfidfVectorizer(
-            stop_words='english',
-            ngram_range=(1, 1),  # Use only unigrams for better matching
-            max_df=0.99,  # Very high - include almost all words
-            min_df=1,
-            max_features=500,  # Reasonable feature limit
-            use_idf=True,
-            smooth_idf=True,
-            sublinear_tf=False
-        )
-        
-        # Fit and transform
-        vectors = vectorizer.fit_transform([resume_clean, jd_clean])
-        
-        # Check if we got any features
-        if vectors.shape[1] == 0:
-            # If no features, try without stop words
-            vectorizer_no_stop = TfidfVectorizer(
-                stop_words=None,  # No stop words removal
-                ngram_range=(1, 1),
-                max_df=1.0,
-                min_df=1
-            )
-            vectors = vectorizer_no_stop.fit_transform([resume_clean, jd_clean])
-            
-            if vectors.shape[1] == 0:
-                return 0.3  # Fallback score
-        
-        # Calculate similarity
-        similarity = cosine_similarity(vectors[0:1], vectors[1:2])[0][0]
-        
-        # Ensure minimum score
-        similarity = max(0.1, similarity)  # At least 10%
-        
-        # Cap at reasonable maximum
-        similarity = min(0.8, similarity)  # Not more than 80%
-        
-        return similarity
-        
-    except Exception as e:
-        # Debug information (optional - remove in production)
-        print(f"TF-IDF Debug: {str(e)[:100]}")
-        return 0.3  # Reasonable fallback
+# Local module imports
+from text_cleaner import clean_text
+from skill_gap import extract_skills
+from keyword_gap import extract_keywords, match_keywords_with_context, extract_phrases_from_text
+
+# =====================================================
+# LOAD SEMANTIC MODEL
+# =====================================================
+
+@st.cache_resource
+def get_model():
+    """Loads and caches the model so it only downloads once."""
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+# =====================================================
+# EXPERIENCE EXTRACTION
+# =====================================================
 
 def extract_experience_years(text):
-    """
-    Extract years of experience from text using multiple patterns
-    """
-    text_lower = text.lower()
-    max_years = 0
-    
-    # Patterns for years of experience
+    """Extract years of experience from text"""
+    text = text.lower()
+    years = []
+
     patterns = [
         r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
-        r'(\d+)\+?\s*years?\s*in\s*\w+',
-        r'(\d+)\s*-\s*(\d+)\s*years',
-        r'(\d+)\s*years?\s*experience',
-        r'(\d+)\s*years?\s*in',
-        r'(\d+)\+?\s*years'
+        r'(\d+)\+?\s*years?\s*experience',
+        r'(\d+)\+?\s*years',
+        r'over\s+(\d+)\s*years',
+        r'more than\s+(\d+)\s*years',
+        r'(\d+)\s*\+\s*years',
+        r'experience\s*:\s*(\d+)\+?\s*years',
+        r'(\d+)-(\d+)\s*years',
+        r'(\d+)\s+years'
     ]
-    
+
     for pattern in patterns:
-        matches = re.findall(pattern, text_lower)
+        matches = re.findall(pattern, text)
         for match in matches:
-            if isinstance(match, tuple):
-                # Handle patterns that return tuples (like "2-5 years")
-                for num in match:
-                    if num and num.isdigit():
-                        max_years = max(max_years, int(num))
-            elif match.isdigit():
-                max_years = max(max_years, int(match))
-    
-    # If no explicit years found, try to estimate from work history dates
-    if max_years == 0:
-        # Look for date ranges like "2020 - 2023"
-        date_ranges = re.findall(r'(?:19|20)\d{2}\s*[-–]\s*(?:19|20)\d{2}', text)
-        if date_ranges:
-            # Simple estimate: each range is at least 1 year
-            max_years = len(date_ranges)
+            try:
+                if isinstance(match, tuple):
+                    years.append(int(match[-1]))
+                else:
+                    years.append(int(match))
+            except:
+                pass
+
+    return max(years) if years else 0
+
+# =====================================================
+# SEMANTIC SIMILARITY
+# =====================================================
+
+def calculate_similarity(resume_text, jd_text):
+    """Calculate semantic similarity between resume and job description"""
+    try:
+        model = get_model()
         
-        # Also check for phrases like "over 5 years" or "5+ years"
-        plus_patterns = [
-            r'over\s+(\d+)\s*years',
-            r'(\d+)\+\s*years',
-            r'more\s+than\s+(\d+)\s*years'
-        ]
+        # Handle long texts by truncating
+        max_length = 512
+        resume_words = resume_text.split()
+        jd_words = jd_text.split()
         
-        for pattern in plus_patterns:
-            matches = re.findall(pattern, text_lower)
-            for match in matches:
-                if match.isdigit():
-                    max_years = max(max_years, int(match))
+        if len(resume_words) > max_length:
+            resume_text = ' '.join(resume_words[:max_length])
+        if len(jd_words) > max_length:
+            jd_text = ' '.join(jd_words[:max_length])
+        
+        resume_embedding = model.encode(resume_text)
+        jd_embedding = model.encode(jd_text)
+        
+        similarity = cosine_similarity(
+            [resume_embedding],
+            [jd_embedding]
+        )[0][0]
+        
+        return float(similarity)
     
-    return max_years
+    except Exception as e:
+        print(f"Similarity Calculation Error: {e}")
+        return 0.0
 
-def calculate_match(resume_text, jd_text):
-    """
-    Simple TF-IDF matching (for backward compatibility)
-    """
-    resume_clean = clean_text(resume_text)
-    jd_clean = clean_text(jd_text)
+# =====================================================
+# EXPERIENCE SCORE
+# =====================================================
 
-    vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
-    vectors = vectorizer.fit_transform([resume_clean, jd_clean])
+def calculate_experience_score(resume_years, jd_years):
+    if jd_years == 0:
+        return 1.0
+    
+    if resume_years >= jd_years:
+        return 1.0
+    
+    return resume_years / jd_years
 
-    similarity_score = cosine_similarity(vectors[0:1], vectors[1:2])[0][0]
-    return round(similarity_score * 100, 2)
+# =====================================================
+# SKILL SCORE
+# =====================================================
+
+def calculate_skill_score(resume_skills, jd_skills):
+    """Calculate skill match with partial matching support"""
+    matched = set()
+    missing = set()
+    partial_matches = {}
+    
+    # First pass: exact matches
+    for jd_skill in jd_skills:
+        if jd_skill in resume_skills:
+            matched.add(jd_skill)
+        else:
+            # Second pass: partial matching
+            found = False
+            for resume_skill in resume_skills:
+                if (jd_skill.lower() in resume_skill.lower() or 
+                    resume_skill.lower() in jd_skill.lower()):
+                    matched.add(jd_skill)
+                    partial_matches[jd_skill] = resume_skill
+                    found = True
+                    break
+            
+            if not found:
+                missing.add(jd_skill)
+    
+    score = len(matched) / len(jd_skills) if jd_skills else 0
+    return score, matched, missing, partial_matches
+
+# =====================================================
+# MAIN MATCH FUNCTION
+# =====================================================
 
 def calculate_detailed_match(resume_text, jd_text):
-    """
-    Comprehensive matching using multiple strategies with weighted scoring
-    Returns both overall score and detailed breakdown
-    """
-    # Clean the texts
+    """Calculate detailed match between resume and job description"""
+    
     resume_clean = clean_text(resume_text)
     jd_clean = clean_text(jd_text)
     
-    # Import here to avoid circular imports
-    from skill_gap import extract_skills
-    from keyword_gap import extract_keywords
-    
-    # ----- Strategy 1: TF-IDF Similarity (20% weight) -----
-    tfidf_score = enhanced_tfidf_match(resume_text, jd_text)
-    
-    # ----- Strategy 2: Keyword Overlap Score (30% weight) -----
-    resume_keywords = extract_keywords(resume_clean, top_n=30)
-    jd_keywords = extract_keywords(jd_clean, top_n=30)
-    
-    if jd_keywords:
-        keyword_overlap = len(resume_keywords & jd_keywords) / len(jd_keywords)
-    else:
-        keyword_overlap = 0
-    
-    # ----- Strategy 3: Skill Match Score (30% weight) -----
+    # =================================================
+    # SKILLS
+    # =================================================
     resume_skills = extract_skills(resume_clean)
     jd_skills = extract_skills(jd_clean)
     
-    if jd_skills:
-        skill_match = len(resume_skills & jd_skills) / len(jd_skills)
-    else:
-        skill_match = 0
+    skill_score, matched_skills, missing_skills, skill_partial_matches = calculate_skill_score(
+        resume_skills, jd_skills
+    )
     
-    # ----- Strategy 4: Experience Match (20% weight) -----
+    # =================================================
+    # KEYWORDS (IMPROVED WITH PHRASES)
+    # =================================================
+    # Extract keywords including phrases
+    resume_keywords = extract_keywords(resume_clean, top_n=40)
+    jd_keywords = extract_keywords(jd_clean, top_n=40)
+    
+    # Remove skill overlap to avoid double-counting
+    resume_keywords = resume_keywords - {s.lower() for s in resume_skills}
+    jd_keywords = jd_keywords - {s.lower() for s in jd_skills}
+    
+    # Calculate keyword score with enhanced matching
+    keyword_match = match_keywords_with_context(
+        resume_keywords, 
+        jd_keywords, 
+        resume_clean, 
+        jd_clean
+    )
+    
+    keyword_score = keyword_match['match_percentage'] / 100
+    matched_keywords = keyword_match['matched']
+    missing_keywords = keyword_match['missing']
+    
+    # =================================================
+    # EXPERIENCE
+    # =================================================
     resume_years = extract_experience_years(resume_text)
     jd_years = extract_experience_years(jd_text)
     
-    if jd_years > 0:
-        if resume_years >= jd_years:
-            exp_score = 1.0  # Meets or exceeds requirement
-        else:
-            # Partial credit based on percentage of required years
-            # Add 0.2 bonus for having some relevant experience
-            exp_score = min(1.0, (resume_years / jd_years) + 0.2)
-    else:
-        exp_score = 1.0  # No experience requirement specified
+    experience_score = calculate_experience_score(resume_years, jd_years)
     
-    # ----- Calculate Weighted Score -----
+    # =================================================
+    # SIMILARITY
+    # =================================================
+    similarity_score = calculate_similarity(resume_clean, jd_clean)
+    
+    # =================================================
+    # WEIGHTS
+    # =================================================
     weights = {
-        'tfidf': 0.20,      # TF-IDF similarity
-        'keywords': 0.30,   # Keyword overlap
-        'skills': 0.30,     # Skill match
-        'experience': 0.20  # Experience match
+        "skills": 0.40,
+        "experience": 0.15,
+        "keywords": 0.15,
+        "similarity": 0.30
     }
     
-    weighted_score = (
-        tfidf_score * weights['tfidf'] +
-        keyword_overlap * weights['keywords'] +
-        skill_match * weights['skills'] +
-        exp_score * weights['experience']
-    )
+    final_score = (
+        skill_score * weights["skills"] +
+        experience_score * weights["experience"] +
+        keyword_score * weights["keywords"] +
+        similarity_score * weights["similarity"]
+    ) * 100
     
-    # ----- Apply Bonuses for Meeting Basic Requirements -----
-    bonus = 0
+    final_score = round(min(final_score, 100), 2)
     
-    # Bonus for having at least some required skills
-    if skill_match > 0.3:  # Has at least 30% of required skills
-        bonus += 0.1
-    
-    # Bonus for keyword coverage
-    if keyword_overlap > 0.3:  # Has at least 30% of keywords
-        bonus += 0.1
-    
-    # Bonus for having reasonable experience
-    if jd_years > 0 and resume_years >= jd_years * 0.5:  # Has at least half the required experience
-        bonus += 0.1
-    
-    # Calculate final score (capped at 100%)
-    final_score = min(100, (weighted_score + bonus) * 100)
-    
-    # ----- Return Results -----
+    # =================================================
+    # RETURN RESULTS
+    # =================================================
     return {
-        'overall': round(final_score, 2),
-        'breakdown': {
-            'skills': round(skill_match * 100, 2),
-            'keywords': round(keyword_overlap * 100, 2),
-            'experience': round(exp_score * 100, 2),
-            'tfidf': round(tfidf_score * 100, 2)
+        "overall": final_score,
+        "breakdown": {
+            "skills": round(skill_score * 100, 2),
+            "keywords": round(keyword_score * 100, 2),
+            "experience": round(experience_score * 100, 2),
+            "similarity": round(similarity_score * 100, 2)
         },
-        'details': {
-            'resume_years': resume_years,
-            'jd_years': jd_years,
-            'resume_skills_count': len(resume_skills),
-            'jd_skills_count': len(jd_skills),
-            'matched_skills_count': len(resume_skills & jd_skills),
-            'resume_keywords_count': len(resume_keywords),
-            'jd_keywords_count': len(jd_keywords),
-            'matched_keywords_count': len(resume_keywords & jd_keywords)
+        "details": {
+            "resume_years": resume_years,
+            "jd_years": jd_years,
+            "resume_skills": list(resume_skills),
+            "jd_skills": list(jd_skills),
+            "matched_skills": list(matched_skills),
+            "missing_skills": list(missing_skills),
+            "skill_partial_matches": skill_partial_matches,
+            "resume_keywords": list(resume_keywords),
+            "jd_keywords": list(jd_keywords),
+            "matched_keywords": matched_keywords,
+            "missing_keywords": missing_keywords,
+            "partial_keyword_matches": keyword_match.get('partial_matches', {}),
+            "semantic_keyword_matches": keyword_match.get('semantic_matches', {})
         }
     }
 
+# =====================================================
+# INTERPRETATION
+# =====================================================
+
 def get_match_interpretation(score):
-    """
-    Get a human-readable interpretation of the match score
-    """
-    if score >= 85:
+    """Get interpretation based on match score"""
+    if score >= 90:
         return {
-            'level': 'EXCELLENT',
-            'message': 'Your resume is exceptionally well-aligned with this position.',
-            'action': 'You should definitely apply!'
+            "level": "EXCELLENT",
+            "message": "Outstanding alignment with the role. Your skills and experience strongly match what they're looking for.",
+            "action": "Apply with high confidence. Highlight your strongest matches in your cover letter.",
+            "color": "success"
+        }
+    elif score >= 80:
+        return {
+            "level": "VERY STRONG",
+            "message": "Very strong fit with minor improvements possible. You're a competitive candidate.",
+            "action": "Apply with confidence. Address the missing keywords in your resume.",
+            "color": "success"
         }
     elif score >= 70:
         return {
-            'level': 'STRONG',
-            'message': 'Your resume has strong alignment with the job requirements.',
-            'action': 'Apply after making minor improvements.'
+            "level": "STRONG",
+            "message": "Strong match with a few areas to strengthen. You meet most key requirements.",
+            "action": "Tailor your resume to include missing keywords and apply.",
+            "color": "info"
         }
-    elif score >= 55:
+    elif score >= 60:
         return {
-            'level': 'GOOD',
-            'message': 'Your resume shows good potential for this role.',
-            'action': 'Make moderate improvements before applying.'
+            "level": "GOOD",
+            "message": "Good foundation but needs refinement. You have relevant skills but may lack specific keywords.",
+            "action": "Incorporate missing keywords and consider adding relevant projects.",
+            "color": "info"
         }
-    elif score >= 40:
+    elif score >= 50:
         return {
-            'level': 'MODERATE',
-            'message': 'Your resume needs significant improvements for this role.',
-            'action': 'Focus on adding missing skills and keywords.'
+            "level": "MODERATE",
+            "message": "Several important requirements are missing from your resume.",
+            "action": "Focus on adding missing skills and keywords before applying.",
+            "color": "warning"
+        }
+    elif score >= 35:
+        return {
+            "level": "LIMITED",
+            "message": "Limited alignment with the role. Significant gaps in required skills.",
+            "action": "Consider upskilling or finding roles that better match your current experience.",
+            "color": "error"
         }
     else:
         return {
-            'level': 'WEAK',
-            'message': 'This may not be the best fit with your current resume.',
-            'action': 'Consider roles that better match your current skills.'
+            "level": "WEAK",
+            "message": "Minimal alignment with the role. Your background may be better suited for other positions.",
+            "action": "Look for roles that match your existing skills or invest in relevant training.",
+            "color": "error"
         }
 
-# Test function (optional - can be removed in production)
+# =====================================================
+# LOCAL TERMINAL TEST
+# =====================================================
+
 if __name__ == "__main__":
-    # Simple test with sample texts
-    sample_resume = """
-    Experienced Data Analyst with 3 years in business intelligence.
-    Skills: Python, SQL, Data Visualization, Machine Learning.
-    Developed predictive models and created comprehensive reports.
+    test_resume = """
+    Digital Marketing Manager with 5 years experience
+    Skills: SEO, SEM, Google Ads, GA4, HubSpot, Salesforce
+    Achievements: Increased organic traffic by 150%
     """
     
-    sample_jd = """
-    Seeking Data Analyst with 2+ years experience.
-    Required: SQL, Python, Data Analysis, Communication skills.
-    Will develop systems and create documentation.
+    test_jd = """
+    Digital Marketing Manager Needed
+    Requirements:
+    - 4+ years experience
+    - SEO, SEM, Google Ads, GA4
+    - Customer acquisition strategy
+    - Lead generation
+    - End-to-end campaign execution
     """
     
-    print("Testing matcher.py...")
-    result = calculate_detailed_match(sample_resume, sample_jd)
-    
-    print(f"\nOverall Match: {result['overall']}%")
-    print("\nBreakdown:")
-    for category, score in result['breakdown'].items():
-        print(f"  {category}: {score}%")
-    
-    interpretation = get_match_interpretation(result['overall'])
-    print(f"\nInterpretation: {interpretation['level']}")
-    print(f"Message: {interpretation['message']}")
-    print(f"Action: {interpretation['action']}")
+    try:
+        result = calculate_detailed_match(test_resume, test_jd)
+        print("\n" + "="*60)
+        print("MATCH RESULT")
+        print("="*60)
+        print(f"Overall Score: {result['overall']}%")
+        print(f"\nBreakdown:")
+        for category, score in result['breakdown'].items():
+            print(f"  {category.title()}: {score}%")
+        print(f"\nSkills: {len(result['details']['matched_skills'])}/{len(result['details']['jd_skills'])} matched")
+        print(f"Keywords: {len(result['details']['matched_keywords'])}/{len(result['details']['jd_keywords'])} matched")
+        print(f"\nMatched Keywords: {result['details']['matched_keywords'][:5]}")
+        print(f"Missing Keywords: {result['details']['missing_keywords'][:5]}")
+        
+        if result['details'].get('semantic_keyword_matches'):
+            print(f"\nSemantic Matches: {len(result['details']['semantic_keyword_matches'])}")
+        
+        interpretation = get_match_interpretation(result['overall'])
+        print(f"\nInterpretation: {interpretation['level']}")
+        print(f"Action: {interpretation['action']}")
+        
+    except Exception as error:
+        print(f"Test failed: {error}")
+        import traceback
+        traceback.print_exc()
